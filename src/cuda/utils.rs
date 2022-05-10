@@ -11,7 +11,7 @@ use crate::error::{GPUError, GPUResult};
 // directly, they are only accessed through [`cuda::Device`] which contains an `UnownedContext`.
 // A device cannot have an own context itself, as then it couldn't be cloned, but that is needed
 // for creating the kernels.
-pub(crate) struct CudaContexts(Vec<rustacuda::context::Context>);
+pub(crate) struct CudaContexts(Vec<cust::context::legacy::Context>);
 unsafe impl Sync for CudaContexts {}
 
 /// The PCI-ID is the combination of the PCI Bus ID and PCI Device ID.
@@ -23,14 +23,14 @@ unsafe impl Sync for CudaContexts {}
 ///     || └└-- Device ID
 ///     └└-- Bus ID
 /// ```
-fn get_pci_id(device: &rustacuda::device::Device) -> Result<PciId, GPUError> {
-    let bus_id = device.get_attribute(rustacuda::device::DeviceAttribute::PciBusId)? as u16;
-    let device_id = device.get_attribute(rustacuda::device::DeviceAttribute::PciDeviceId)? as u16;
+fn get_pci_id(device: &cust::device::Device) -> Result<PciId, GPUError> {
+    let bus_id = device.get_attribute(cust::device::DeviceAttribute::PciBusId)? as u16;
+    let device_id = device.get_attribute(cust::device::DeviceAttribute::PciDeviceId)? as u16;
     let pci_id = (bus_id << 8) | device_id;
     Ok(pci_id.into())
 }
 
-fn get_memory(d: &rustacuda::device::Device) -> GPUResult<u64> {
+fn get_memory(d: &cust::device::Device) -> GPUResult<u64> {
     let memory = d.total_memory()?;
     Ok(u64::try_from(memory).expect("Platform must be <= 64-bit"))
 }
@@ -44,22 +44,24 @@ pub(crate) fn build_device_list() -> (Vec<Device>, CudaContexts) {
     let mut devices_without_pci_id = Vec::new();
     let mut contexts = Vec::new();
 
-    rustacuda::init(rustacuda::CudaFlags::empty())
+    cust::init(cust::CudaFlags::empty())
         .map_err(Into::into)
         .and_then(|_| {
-            for device in rustacuda::device::Device::devices()? {
+            for device in cust::device::Device::devices()? {
                 let device = device?;
-                let owned_context = rustacuda::context::Context::create_and_push(
-                    rustacuda::context::ContextFlags::MAP_HOST
-                        | rustacuda::context::ContextFlags::SCHED_AUTO,
+                let owned_context = cust::context::legacy::Context::create_and_push(
+                    cust::context::legacy::ContextFlags::MAP_HOST
+                        | cust::context::legacy::ContextFlags::SCHED_AUTO,
                     device,
                 )?;
-                rustacuda::context::ContextStack::pop()?;
+                cust::context::legacy::ContextStack::pop()?;
 
                 let vendor = Vendor::Nvidia;
                 let name = device.name()?;
                 let memory = get_memory(&device)?;
-                let uuid = device.uuid().ok().map(Into::into);
+                // TODO vmx 2022-05-10: Port `uuid()` to `cust`: https://github.com/bheisler/RustaCUDA/pull/56/commits/7f375af3679ea010765bf76bb405ae9b5ffa029b
+                //let uuid = device.uuid().ok().map(Into::into);
+                let uuid = None;
                 let context = owned_context.get_unowned();
 
                 contexts.push(owned_context);
